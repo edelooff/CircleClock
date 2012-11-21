@@ -29,8 +29,8 @@ long colorHours = 0;
 
 // Timing variables
 long currentMillis = 0;
-long previousSecond = 0;
-long previousUpdate = 0;
+long nextSecond = 0;
+long nextUpdate = 0;
 
 void setup() {
   strip.begin();
@@ -39,8 +39,9 @@ void setup() {
 }
 
 void loop() {
-  if (currentMillis - previousSecond >= INTERVAL_SECOND) {
-    previousSecond = currentMillis;  // One second passed, set timer for next
+  currentMillis = millis();
+  if (currentMillis >= nextSecond) {
+    nextSecond = currentMillis + INTERVAL_SECOND;  // One second passed, set timer for next
     second = ++second % SECONDS_PER_MINUTE;
     if (second == 0) {
       minute = ++minute % MINUTES;
@@ -49,9 +50,8 @@ void loop() {
       Serial.println("New minute");
     }
   }
-  currentMillis = millis();
-  if (currentMillis - previousUpdate >= INTERVAL_UPDATE) {
-    previousUpdate = currentMillis; // Did a color update, set timer for next
+  if (currentMillis >= nextUpdate) {
+    nextUpdate = currentMillis + INTERVAL_UPDATE; // Did a color update, set timer for next
     DisplayMinutes();
   }  
 }
