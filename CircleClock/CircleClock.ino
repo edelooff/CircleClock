@@ -2,136 +2,163 @@
 #include <SPI.h>
 
 // Basic times and counts
-#define LED_COUNT (42)
-#define MINUTES (LED_COUNT)
-#define SECONDS_PER_MINUTE (60)
-#define SECONDS_PER_HOUR (MINUTES * SECONDS_PER_MINUTE)
+const byte
+  stripLength = 158,
+  minuteBegin = 0,
+  minuteDots = 60,
+  hourBegin = 62,
+  hourDots = 96,
+  brightness = 100, // this doesn't work yet for the main colors
+  minutesPerHour = 60, // This does not take well to changes
+  hoursPerCircle = 12,
+  hoursPerDay = 24;
+const unsigned int
+  intervalTick = 1000,  // 1000
+  intervalUpdate = 20, // 20,
+  ticksPerMinute = 60, // 60
+  ticksPerHour = ticksPerMinute * minutesPerHour;
+const unsigned long
+  ticksPerCircle = ticksPerHour * hoursPerCircle,
+  ticksPerDay = ticksPerHour * hoursPerDay;
+bool
+  secondHandRising = true;
+byte
+  secondHandBrightness = 0;
+unsigned long
+  // Relative timekeeping colors variables
+  colorHandMinute = 0,
+  colorHandHour = 0,
+  secondsPastHour = 0,
+  secondsPastMidnight = 0,
+  // Timing variables
+  currentMillis = 0,
+  nextTick = 0,
+  nextUpdate = 0;
 
-#define BRIGHTNESS (50)
-
-// Intervals
-#define INTERVAL_SECOND (1000)
-#define INTERVAL_UPDATE (20)
-#define MINUTE_HAND_STEPS (INTERVAL_SECOND / INTERVAL_UPDATE / 2)
-
-LPD8806 strip = LPD8806(LED_COUNT);
-#define DARK (strip.Color(0, 0, 0))
-
-// Current time variables
-byte minute = 15; // start clock at 15 minutes past
-byte second = 0;
-byte minute_hand_brightness = 0;
-boolean minute_hand_rising = true;
-
-// Color variables
-long colorMinutes = 0;
-long colorHours = 0;
-
-// Timing variables
-long currentMillis = 0;
-long nextSecond = 0;
-long nextUpdate = 0;
+LPD8806 strip = LPD8806(stripLength);
 
 void setup() {
   strip.begin();
-  Serial.begin(9600);
+  Serial.begin(57600);
   Serial.println("[circleclock_animation]");
 }
 
 void loop() {
   currentMillis = millis();
-  if (currentMillis >= nextSecond) {
-    nextSecond = currentMillis + INTERVAL_SECOND;  // One second passed, set timer for next
-    second = ++second % SECONDS_PER_MINUTE;
-    if (second == 0) {
-      minute = ++minute % MINUTES;
-      minute_hand_brightness = 0;
-      minute_hand_rising = true;
-      Serial.println("New minute");
+  if (currentMillis >= nextTick) {
+    nextTick += intervalTick;  // One second passed, set timer for next
+    ++secondsPastHour %= ticksPerHour;
+    ++secondsPastMidnight %= ticksPerDay;
+    if (secondsPastHour % ticksPerMinute == 0) {
+      secondHandBrightness = 0;
+      secondHandRising = true;
     }
+    colorHandMinute = colorWheel(secondsPastHour, ticksPerHour);
+    colorHandHour = colorWheel(secondsPastMidnight, ticksPerCircle);
+    DisplayHours();
   }
   if (currentMillis >= nextUpdate) {
-    nextUpdate = currentMillis + INTERVAL_UPDATE; // Did a color update, set timer for next
+    nextUpdate += intervalUpdate; // Did a color update, set timer for next
     DisplayMinutes();
-  }  
+    strip.show();
+  }
+}
+
+void DisplayHours() {
+  const unsigned int ticksPerDot = ticksPerCircle / hourDots;
+  unsigned int secondsPast = secondsPastMidnight % ticksPerCircle;
+  bool done = false;
+  for (byte i = 0; i < hourDots; ++i) {
+    if (secondsPast >= (i + 1) * ticksPerDot) {
+      strip.setPixelColor(i + hourBegin, colorHandHour);
+    } else if (!done) {
+      byte effectiveBrightness = brightness * (secondsPast % ticksPerDot) / ticksPerDot;
+      strip.setPixelColor(i + hourBegin, colorBrightness(colorHandHour, effectiveBrightness));
+      done = true;
+    } else {
+      strip.setPixelColor(i + hourBegin, 0);
+    }
+  }
 }
 
 void DisplayMinutes() {
-  //TODO: Get the correct color as rgb struct WITHOUT the brightness in there
-  // This way the brightness can be factored in later, removing the need for two
-  // separate color functions (Minute and Hand)
-  colorMinutes = MinuteColor();
-  for (byte i = 0; i < LED_COUNT; i++) {
-    if (i <= minute) {
-      strip.setPixelColor(i, colorMinutes);
+  const byte ticksPerDot = ticksPerHour / minuteDots;
+  const byte handSteps = intervalTick / intervalUpdate / 2;
+  bool done = false;
+  for (byte i = 0; i < minuteDots; ++i) {
+    if (secondsPastHour >= (i + 1) * ticksPerDot) {
+      strip.setPixelColor(i + minuteBegin, colorHandMinute);
+    } else if (!done) {
+      if (secondsPastHour % ticksPerDot == (ticksPerDot - 1)) {
+        secondHandBrightness = min(++secondHandBrightness, handSteps);
+      } else if (secondHandRising) {
+        if (++secondHandBrightness == handSteps)
+          secondHandRising = false;
+      } else {
+        if (--secondHandBrightness == 0)
+          secondHandRising = true;
+      }
+      byte effectiveBrightness = brightness * secondHandBrightness / handSteps;
+      Serial.println(effectiveBrightness);
+      unsigned long secondHandColor = colorBrightness(colorHandMinute, effectiveBrightness);
+      strip.setPixelColor(i + minuteBegin, secondHandColor);
+      done = true;
     } else {
-      strip.setPixelColor(i, DARK);
+      strip.setPixelColor(i + minuteBegin, 0);
     }
   }
-  if (second == (SECONDS_PER_MINUTE - 1)) {
-    minute_hand_brightness = min(++minute_hand_brightness, MINUTE_HAND_STEPS);
-  } else if (minute_hand_rising) {
-    if (++minute_hand_brightness == MINUTE_HAND_STEPS) {
-      minute_hand_rising = false;
-    }
-  } else {
-    if (--minute_hand_brightness == 0) {
-      minute_hand_rising = true;
-    }
-  }
-  strip.setPixelColor(minute, HandColor());
-  strip.show();
+}
+/*
+uint32_t hourColor() {
+  return colorWheel(secondsPastMidnight, ticksPerCircle);
 }
 
-long MinuteColor() {
-  long secondsPast = second + minute * SECONDS_PER_MINUTE;
-  return ColorWheel((secondsPast * 768 / SECONDS_PER_HOUR) % 768, BRIGHTNESS);
+uint32_t minuteColor() {
+  return colorWheel(secondsPastHour, ticksPerHour);
+}
+*/
+long colorBrightness(unsigned long color, byte brightness) {
+  byte green = ((color >> 16) & 0x7F) * brightness / 100;
+  byte red = ((color >> 8) & 0x7F) * brightness / 100;
+  byte blue = (color & 0x7F) * brightness / 100;
+  return strip.Color(red, green, blue);
 }
 
-long HandColor() {
-  long secondsPast = second + minute * SECONDS_PER_MINUTE;
-  byte effectiveBrightness = minute_hand_brightness * BRIGHTNESS / MINUTE_HAND_STEPS;
-  return ColorWheel((secondsPast * 768 / SECONDS_PER_HOUR) % 768, effectiveBrightness);
-}
-
-long ColorWheel(int angle, byte brightness) {
+long colorWheel(unsigned long position, unsigned long scale) {
   // Returns a color out of 768 possible angle fractions of a color wheel
-  int r, g, b;
-  switch (angle / 128) { 
+  unsigned int angle = position * 768 / scale % 768;
+  byte r, g, b;
+  switch (angle / 128) {
     case 0:  // Green up
       r = 127;
       g = angle % 128;
       b = 0;
-      break; 
+      break;
     case 1:  // Red down
       r = 127 - angle % 128;
       g = 127;
       b = 0;
-      break; 
+      break;
     case 2:  // Blue up
       r = 0;
       g = 127;
       b = angle % 128;
-      break; 
+      break;
     case 3: // Green down
       r = 0;
       g = 127 - angle % 128;
       b = 127;
-      break; 
+      break;
     case 4:  // Red up
       r = angle % 128;
       g = 0;
       b = 127;
-      break; 
+      break;
     case 5:  // Blue down
       r = 127;
       g = 0;
       b = 127 - angle % 128;
-      break; 
+      break;
   }
-  r = r * brightness / 100;
-  g = g * brightness / 100;
-  b = b * brightness / 100;
-  return(strip.Color(r,g,b));
+  return strip.Color(r, g, b);
 }
-
