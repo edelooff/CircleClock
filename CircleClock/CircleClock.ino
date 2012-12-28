@@ -9,7 +9,7 @@ const byte
   minuteDots = 60,
   hourBegin = 62,
   hourDots = 96,
-  brightness = 100, // this doesn't work yet for the main colors
+  brightness = 40,
   // Relative distribution of time parts
   ticksPerMinute = 60,
   minutesPerHour = 60,
@@ -204,18 +204,20 @@ void displayMinuteHandBlink(long color) {
 }
 
 unsigned long hourColor() {
-  return colorWheel(ticksPastCircle, ticksPerCircle);
+  return colorBrightness(
+      colorWheel(ticksPastCircle, ticksPerCircle), brightness);
 }
 
 unsigned long minuteColor() {
-  return colorWheel(ticksPastHour, ticksPerHour);
+  return colorBrightness(
+      colorWheel(ticksPastHour, ticksPerHour), brightness);
 }
 
 unsigned long colorBrightness(unsigned long color, byte brightness) {
-  byte green = ((color >> 16) & 0x7F) * brightness / 100;
-  byte red = ((color >> 8) & 0x7F) * brightness / 100;
-  byte blue = (color & 0x7F) * brightness / 100;
-  return strip.Color(red, green, blue);
+  byte b = ((color >> 16) & 0x7F) * brightness / 100;
+  byte r = ((color >> 8) & 0x7F) * brightness / 100;
+  byte g = (color & 0x7F) * brightness / 100;
+  return strip.Color(r, b, g);
 }
 
 unsigned long colorWheel(unsigned long position, unsigned long scale) {
@@ -254,5 +256,7 @@ unsigned long colorWheel(unsigned long position, unsigned long scale) {
       b = 127 - angle % 128;
       break;
   }
-  return strip.Color(r, g, b);
+  //return strip.Color(r, g, b);
+  // Change order of colors because the strip is wired differently
+  return strip.Color(r, b, g); 
 }
