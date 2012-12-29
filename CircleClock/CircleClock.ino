@@ -1,6 +1,8 @@
 #include <LPD8806.h>
 #include <SPI.h>
 
+#define DEBUG (true)
+
 // Basic times and counts
 const byte
   // Physical aspects of the c
@@ -10,6 +12,11 @@ const byte
   hourBegin = 62,
   hourDots = 96,
   brightness = 40,
+  // Relative brightness levels for the hour gong.
+  gongHourFrameDelay = 4,
+  gongLevel[] = {1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 17, 20, 25, 30, 35, 45, 55, 70, 85, 100,
+                 85, 70, 55, 45, 35, 30, 25, 20, 17, 14, 11, 9, 7, 6, 5, 4, 3, 2, 1, 0},
+  gongLevels = sizeof(gongLevel),
   // Relative distribution of time parts
   ticksPerMinute = 60,
   minutesPerHour = 60,
@@ -42,18 +49,22 @@ LPD8806 strip = LPD8806(stripLength);
 
 void setup() {
   strip.begin();
-  Serial.begin(9600);
-  Serial.println("[circleclock_animation]");
-  Serial.print("ticksPerMinute: ");
-  Serial.println(ticksPerMinute);
-  Serial.print("minutesPerHour: ");
-  Serial.println(minutesPerHour);
-  Serial.print("ticksPerHour: ");
-  Serial.println(ticksPerHour);
-  Serial.print("hoursPerCircle: ");
-  Serial.println(hoursPerCircle);
-  Serial.print("ticksPerCircle: ");
-  Serial.println(ticksPerCircle);
+  if (DEBUG) {
+    Serial.begin(9600);
+    Serial.println("[circleclock_animation]");
+    Serial.print("ticksPerMinute: ");
+    Serial.println(ticksPerMinute);
+    Serial.print("minutesPerHour: ");
+    Serial.println(minutesPerHour);
+    Serial.print("ticksPerHour: ");
+    Serial.println(ticksPerHour);
+    Serial.print("hoursPerCircle: ");
+    Serial.println(hoursPerCircle);
+    Serial.print("ticksPerCircle: ");
+    Serial.println(ticksPerCircle);
+    Serial.print("gongLevels: ");
+    Serial.println(gongLevels);
+  }
 }
 
 void loop() {
@@ -69,12 +80,16 @@ void loop() {
     ticksPastHour = unixTime % ticksPerHour;
     ticksPastCircle = unixTime % ticksPerCircle;
     if (ticksPastHour % ticksPerMinute == 0) {
+      // A minute has past
       secondHandBrightness = 0;
       secondHandRising = true;
     }
     printTimeSerial();
     minuteRingColor = minuteColor();
-    displayHours(hourColor());
+    if (ticksPastHour == 0)
+      hourGong(ticksPastCircle / ticksPerHour);
+    else
+      displayHours(hourColor());
   }
   if (currentMillis >= nextUpdate) {
     // Did a color update, set timer for next
@@ -94,7 +109,6 @@ void printTimeSerial(void) {
 }
 
 void processSerialInput(void) {
-  Serial.println("Processing serial input");
   switch (Serial.peek()) {
     case 10: // Newline
       Serial.read();
@@ -137,8 +151,7 @@ void clockAdjust(long difference) {
     if (minuteSteps) {
       --minuteSteps;
       ticksPastHour += minuteDiff;
-      minuteRingColor = minuteColor();
-      displayMinutes(minuteRingColor);
+      displayMinutes(minuteColor());
     }
     if (hourSteps) {
       --hourSteps;
@@ -148,6 +161,7 @@ void clockAdjust(long difference) {
     strip.show();
     delay(5);
   }
+  minuteRingColor = minuteColor();
 }
 
 void clockSetTime(unsigned long time) {
@@ -201,6 +215,39 @@ void displayMinuteHandBlink(long color) {
   byte effectiveBrightness = brightness * secondHandBrightness / handSteps;
   unsigned long secondHandColor = colorBrightness(color, effectiveBrightness);
   strip.setPixelColor(handDot, secondHandColor);
+}
+
+void hourGong(byte strikes) {
+  unsigned long color, hColor, mColor;
+  if (strikes == 0)
+    strikes = hoursPerCircle;
+  color = hourColor();
+  // Fade minute hand before gonging
+  for (byte bright = 95; bright > 0; bright -= 5) {
+    mColor = colorBrightness(minuteColor(), bright);
+    for (byte pos = minuteDots; pos-- > 0;)
+      strip.setPixelColor(minuteBegin + pos, mColor);
+    strip.show();
+    delay(10);
+  }
+  unsigned int frames = strikes * gongLevels + gongHourFrameDelay;
+  for (int frame = 0; frame < frames; ++frame) {
+    // Gong on minutes ring
+    if (frame / gongLevels < strikes) {
+      mColor = colorBrightness(color, gongLevel[frame % gongLevels]);
+      for (byte pos = minuteDots; pos-- > 0;)
+        strip.setPixelColor(minuteBegin + pos, mColor);
+    }
+    // Gong on hours ring, slightly delayed
+    if (frame >= gongHourFrameDelay) {
+      hColor = colorBrightness(color, gongLevel[(frame - gongHourFrameDelay) % gongLevels]);
+      for (byte pos = hourDots; pos-- > 0;)
+        strip.setPixelColor(hourBegin + pos, hColor);
+    }
+    // Make visible and pause between frames
+    strip.show();
+    delay(15);
+  }
 }
 
 unsigned long hourColor() {
@@ -258,5 +305,5 @@ unsigned long colorWheel(unsigned long position, unsigned long scale) {
   }
   //return strip.Color(r, g, b);
   // Change order of colors because the strip is wired differently
-  return strip.Color(r, b, g); 
+  return strip.Color(r, b, g);
 }
