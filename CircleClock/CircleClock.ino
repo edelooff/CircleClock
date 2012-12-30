@@ -1,7 +1,7 @@
 #include <LPD8806.h>
 #include <SPI.h>
 
-#define DEBUG (true)
+#define DEBUG (false)
 
 // Basic times and counts
 const byte
@@ -11,11 +11,12 @@ const byte
   minuteDots = 60,
   hourBegin = 62,
   hourDots = 96,
-  brightness = 40,
+  initialBrightness = 100,
   // Relative brightness levels for the hour gong.
-  gongHourFrameDelay = 4,
-  gongLevel[] = {1, 2, 3, 4, 5, 6, 7, 9, 11, 14, 17, 20, 25, 30, 35, 45, 55, 70, 85, 100,
-                 85, 70, 55, 45, 35, 30, 25, 20, 17, 14, 11, 9, 7, 6, 5, 4, 3, 2, 1, 0},
+  gongFrameTime = 20,
+  gongHourFrameDelay = 5,
+  gongLevel[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 17, 19, 23, 28, 34, 40, 48, 58, 70, 84, 100,
+                 84, 70, 55, 48, 40, 34, 28, 23, 19, 17, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1},
   gongLevels = sizeof(gongLevel),
   // Relative distribution of time parts
   ticksPerMinute = 60,
@@ -23,6 +24,7 @@ const byte
   hoursPerCircle = 12,
   intervalUpdate = 20;
 char
+  adjustmentStepDelay = 5,
   adjustmentStepSize = 5;
 const unsigned int
   intervalTick = 1000;
@@ -36,6 +38,7 @@ const long
 bool
   secondHandRising = true;
 byte
+  brightness = initialBrightness,
   secondHandBrightness = 0;
 int
   ticksPastHour = 0;
@@ -49,8 +52,8 @@ LPD8806 strip = LPD8806(stripLength);
 
 void setup() {
   strip.begin();
+  Serial.begin(9600);
   if (DEBUG) {
-    Serial.begin(9600);
     Serial.println("[circleclock_animation]");
     Serial.print("ticksPerMinute: ");
     Serial.println(ticksPerMinute);
@@ -68,8 +71,9 @@ void setup() {
 }
 
 void loop() {
-  static long nextTick = 0;
-  static long nextUpdate = 0;
+  static long
+    nextTick = 0,
+    nextUpdate = 0;
   long currentMillis = millis();
   if (Serial.available())
     processSerialInput();
@@ -79,13 +83,13 @@ void loop() {
     ++unixTime;
     ticksPastHour = unixTime % ticksPerHour;
     ticksPastCircle = unixTime % ticksPerCircle;
+    minuteRingColor = minuteColor();
     if (ticksPastHour % ticksPerMinute == 0) {
       // A minute has past
       secondHandBrightness = 0;
       secondHandRising = true;
     }
     printTimeSerial();
-    minuteRingColor = minuteColor();
     if (ticksPastHour == 0)
       hourGong(ticksPastCircle / ticksPerHour);
     else
@@ -113,23 +117,37 @@ void processSerialInput(void) {
     case 10: // Newline
       Serial.read();
       break;
+    case 'b':
+      Serial.read();
+      adjustBrightness(Serial.parseInt());
+      break;
     case '+':
       Serial.read();
-      clockAdjust(Serial.parseInt());
+      adjustClock(Serial.parseInt());
       break;
     case '-':
-      Serial.read();
-      clockAdjust(-Serial.parseInt());
+      adjustClock(Serial.parseInt());
       break;
     default:
-      clockSetTime(Serial.parseInt());
+      setClock(Serial.parseInt());
   }
 }
 
-void clockAdjust(long difference) {
+void adjustBrightness(char newBrightness) {
+  brightness = newBrightness;
+  if (DEBUG) {
+    Serial.print("Brightness set to: ");
+    Serial.println(brightness, DEC);
+  }
+}
+
+void adjustClock(long difference) {
+  char minuteDiff, hourDiff;
+  int minuteHandShift, minuteSteps, hourSteps;
+  long hourHandShift;
   unixTime += difference;
-  int minuteHandShift = difference % ticksPerHour;
-  long hourHandShift = difference % ticksPerCircle;
+  minuteHandShift = difference % ticksPerHour;
+  hourHandShift = difference % ticksPerCircle;
   if (ticksPastHour + minuteHandShift < 0)
     minuteHandShift += ticksPerHour;
   else if (ticksPastHour + minuteHandShift > ticksPerHour)
@@ -138,15 +156,10 @@ void clockAdjust(long difference) {
     hourHandShift += ticksPerCircle;
   else if (ticksPastCircle + hourHandShift > ticksPerCircle)
     hourHandShift -= ticksPerCircle;
-  char minuteDiff = adjustmentStepSize;
-  if (minuteHandShift < 0)
-    minuteDiff = -minuteDiff;
-  char hourDiff = adjustmentStepSize * hoursPerCircle;
-  if (hourHandShift < 0)
-    hourDiff = -hourDiff;
-  ticksPerHourDot / (hourHandShift > 0 ? 6 : -6);
-  int minuteSteps = minuteHandShift / minuteDiff;
-  int hourSteps = hourHandShift / hourDiff;
+  minuteDiff = adjustmentStepSize * (minuteHandShift < 0 ? -1 : 1);
+  hourDiff = adjustmentStepSize * hoursPerCircle * (hourHandShift < 0 ? -1 : 1);
+  minuteSteps = minuteHandShift / minuteDiff;
+  hourSteps = hourHandShift / hourDiff;
   while (minuteSteps || hourSteps) {
     if (minuteSteps) {
       --minuteSteps;
@@ -159,13 +172,13 @@ void clockAdjust(long difference) {
       displayHours(hourColor());
     }
     strip.show();
-    delay(5);
+    delay(adjustmentStepDelay);
   }
   minuteRingColor = minuteColor();
 }
 
-void clockSetTime(unsigned long time) {
-  clockAdjust(time - unixTime);
+void setClock(unsigned long time) {
+  adjustClock(time - unixTime);
 }
 
 void displayHours(long color) {
@@ -174,9 +187,9 @@ void displayHours(long color) {
     if (ticksPastCircle >= (i + 1) * ticksPerHourDot) {
       strip.setPixelColor(i + hourBegin, color);
     } else if (!done) {
-      byte effectiveBrightness = (
-          brightness * (ticksPastCircle % ticksPerHourDot) / ticksPerHourDot);
-      strip.setPixelColor(i + hourBegin, colorBrightness(color, effectiveBrightness));
+      byte relativeBrightness = (
+          100 * (ticksPastCircle % ticksPerHourDot) / ticksPerHourDot);
+      strip.setPixelColor(i + hourBegin, colorBrightness(color, relativeBrightness));
       done = true;
     } else {
       strip.setPixelColor(i + hourBegin, 0);
@@ -190,9 +203,9 @@ void displayMinutes(long color) {
     if (ticksPastHour >= (i + 1) * ticksPerMinuteDot) {
       strip.setPixelColor(i + minuteBegin, color);
     } else if (!done) {
-      byte effectiveBrightness = (
-          brightness * (ticksPastHour % ticksPerMinuteDot) / ticksPerMinuteDot);
-      strip.setPixelColor(i + minuteBegin, colorBrightness(color, effectiveBrightness));
+      byte relativeBrightness = (
+          100 * (ticksPastHour % ticksPerMinuteDot) / ticksPerMinuteDot);
+      strip.setPixelColor(i + minuteBegin, colorBrightness(color, relativeBrightness));
       done = true;
     } else {
       strip.setPixelColor(i + minuteBegin, 0);
@@ -202,7 +215,8 @@ void displayMinutes(long color) {
 
 void displayMinuteHandBlink(long color) {
   const byte handSteps = intervalTick / intervalUpdate / 2;
-  byte handDot = ticksPastHour / ticksPerMinuteDot + minuteBegin;
+  byte handDot, relativeBrightness;
+  handDot = ticksPastHour / ticksPerMinuteDot + minuteBegin;
   if (ticksPastHour % ticksPerMinuteDot == (ticksPerMinuteDot - 1)) {
     secondHandBrightness = min(++secondHandBrightness, handSteps);
   } else if (secondHandRising) {
@@ -212,9 +226,8 @@ void displayMinuteHandBlink(long color) {
     if (!--secondHandBrightness)
       secondHandRising = true;
   }
-  byte effectiveBrightness = brightness * secondHandBrightness / handSteps;
-  unsigned long secondHandColor = colorBrightness(color, effectiveBrightness);
-  strip.setPixelColor(handDot, secondHandColor);
+  relativeBrightness = 100 * secondHandBrightness / handSteps;
+  strip.setPixelColor(handDot, colorBrightness(color, relativeBrightness));
 }
 
 void hourGong(byte strikes) {
@@ -228,7 +241,7 @@ void hourGong(byte strikes) {
     for (byte pos = minuteDots; pos-- > 0;)
       strip.setPixelColor(minuteBegin + pos, mColor);
     strip.show();
-    delay(10);
+    delay(gongFrameTime);
   }
   unsigned int frames = strikes * gongLevels + gongHourFrameDelay;
   for (int frame = 0; frame < frames; ++frame) {
@@ -246,24 +259,28 @@ void hourGong(byte strikes) {
     }
     // Make visible and pause between frames
     strip.show();
-    delay(15);
+    delay(gongFrameTime);
   }
 }
 
 unsigned long hourColor() {
+  // Returns the color for the hour ring (global brightness is applied)
   return colorBrightness(
       colorWheel(ticksPastCircle, ticksPerCircle), brightness);
 }
 
 unsigned long minuteColor() {
+  // Returns the color for the minute ring (global brightness is applied)
   return colorBrightness(
       colorWheel(ticksPastHour, ticksPerHour), brightness);
 }
 
 unsigned long colorBrightness(unsigned long color, byte brightness) {
+  // Changes the brightness for a particular color, each channel linearly
   byte b = ((color >> 16) & 0x7F) * brightness / 100;
   byte r = ((color >> 8) & 0x7F) * brightness / 100;
   byte g = (color & 0x7F) * brightness / 100;
+  // Strip is wired differently from library expectations, RBG order is correct.
   return strip.Color(r, b, g);
 }
 
@@ -303,7 +320,6 @@ unsigned long colorWheel(unsigned long position, unsigned long scale) {
       b = 127 - angle % 128;
       break;
   }
-  //return strip.Color(r, g, b);
-  // Change order of colors because the strip is wired differently
+  // Strip is wired differently from library expectations, RBG order is correct.
   return strip.Color(r, b, g);
 }
