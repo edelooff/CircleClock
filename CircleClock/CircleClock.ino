@@ -1,18 +1,17 @@
 #include <LPD8806.h>
 #include <SPI.h>
 
-#define DEBUG (false)
+#define DEBUG (true)
 
-// Basic times and counts
 const byte
-  // Physical aspects of the c
+  // Physical aspects of the clock
   stripLength = 158,
   minuteBegin = 0,
   minuteDots = 60,
   hourBegin = 62,
   hourDots = 96,
   initialBrightness = 100,
-  // Relative brightness levels for the hour gong.
+  // Gong timing, ring delay and relative brightness levels
   gongFrameTime = 20,
   gongHourFrameDelay = 5,
   gongLevel[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 17, 19, 23, 28, 34, 40, 48, 58, 70, 84, 100,
@@ -23,18 +22,17 @@ const byte
   minutesPerHour = 60,
   hoursPerCircle = 12,
   intervalUpdate = 20;
-char
+const char
+  // Speed and stepsize for clock adjustments
   adjustmentStepDelay = 5,
   adjustmentStepSize = 5;
-const unsigned int
-  intervalTick = 1000;
 const int
+  intervalTick = 1000,
   ticksPerHour = ticksPerMinute * minutesPerHour,
   ticksPerMinuteDot = ticksPerHour / minuteDots;
 const long
   ticksPerCircle = (long) ticksPerHour * hoursPerCircle,
   ticksPerHourDot = ticksPerCircle / hourDots;
-
 bool
   secondHandRising = true;
 byte
@@ -43,10 +41,9 @@ byte
 int
   ticksPastHour = 0;
 long
+  minuteRingColor = 0,
   ticksPastCircle = 0,
   unixTime = 0;
-unsigned long
-  minuteRingColor = 0;
 
 LPD8806 strip = LPD8806(stripLength);
 
@@ -80,28 +77,45 @@ void loop() {
   if (currentMillis >= nextTick) {
     // One second passed, set timer for next
     nextTick = currentMillis + intervalTick;
-    ++unixTime;
-    ticksPastHour = unixTime % ticksPerHour;
-    ticksPastCircle = unixTime % ticksPerCircle;
-    minuteRingColor = minuteColor();
-    if (ticksPastHour % ticksPerMinute == 0) {
-      // A minute has past
-      secondHandBrightness = 0;
-      secondHandRising = true;
-    }
-    printTimeSerial();
-    if (ticksPastHour == 0)
-      hourGong(ticksPastCircle / ticksPerHour);
-    else
-      displayHours(hourColor());
+    eachTick();
   }
   if (currentMillis >= nextUpdate) {
-    // Did a color update, set timer for next
     nextUpdate = currentMillis + intervalUpdate;
-    displayMinutes(minuteRingColor);
-    displayMinuteHandBlink(minuteRingColor);
-    strip.show();
+    eachUpdate();
   }
+}
+
+void eachUpdate(void) {
+  // Updates the color and brightness of the seconds and minute ring
+  displayMinutes(minuteRingColor);
+  displayMinuteHandBlink(minuteRingColor);
+  strip.show();
+}
+
+void eachTick(void) {
+  // Updates that are run each second.
+  // Increments tracked time and offsets, updates hour hand color and position
+  ++unixTime;
+  ticksPastHour = unixTime % ticksPerHour;
+  ticksPastCircle = unixTime % ticksPerCircle;
+  minuteRingColor = minuteColor();
+  printTimeSerial();
+  if (ticksPastHour % ticksPerMinute == 0)
+    eachMinute();
+  displayHours(hourColor());
+}
+
+void eachMinute(void) {
+  // After each minute, resets the blinking hand brightness and direction.
+  secondHandBrightness = 0;
+  secondHandRising = true;
+  if (ticksPastHour == 0)
+    eachHour();
+}
+
+void eachHour(void) {
+  // Each hour, gong the number of hours that have passed and synchronize the time.
+  hourGong(ticksPastCircle / ticksPerHour);
 }
 
 void printTimeSerial(void) {
@@ -231,20 +245,25 @@ void displayMinuteHandBlink(long color) {
 }
 
 void hourGong(byte strikes) {
+  unsigned int frames;
   unsigned long color, hColor, mColor;
   if (strikes == 0)
     strikes = hoursPerCircle;
   color = hourColor();
-  // Fade minute hand before gonging
+  // Fade minute ring before gonging
   for (byte bright = 95; bright > 0; bright -= 5) {
     mColor = colorBrightness(minuteColor(), bright);
+    displayHours(colorBrightness(color, bright));
     for (byte pos = minuteDots; pos-- > 0;)
       strip.setPixelColor(minuteBegin + pos, mColor);
     strip.show();
     delay(gongFrameTime);
   }
-  unsigned int frames = strikes * gongLevels + gongHourFrameDelay;
-  for (int frame = 0; frame < frames; ++frame) {
+  // TODO: Fade out hour ring before gonging, fade it back in when done.
+  // Preferably have the first gong rise blend into the hour ring
+  // and have the last gong fade leave the current hour in place.
+  frames = strikes * gongLevels + gongHourFrameDelay;
+  for (unsigned int frame = 0; frame < frames; ++frame) {
     // Gong on minutes ring
     if (frame / gongLevels < strikes) {
       mColor = colorBrightness(color, gongLevel[frame % gongLevels]);
@@ -265,14 +284,12 @@ void hourGong(byte strikes) {
 
 unsigned long hourColor() {
   // Returns the color for the hour ring (global brightness is applied)
-  return colorBrightness(
-      colorWheel(ticksPastCircle, ticksPerCircle), brightness);
+  return colorBrightness(colorWheel(ticksPastCircle, ticksPerCircle), brightness);
 }
 
 unsigned long minuteColor() {
   // Returns the color for the minute ring (global brightness is applied)
-  return colorBrightness(
-      colorWheel(ticksPastHour, ticksPerHour), brightness);
+  return colorBrightness(colorWheel(ticksPastHour, ticksPerHour), brightness);
 }
 
 unsigned long colorBrightness(unsigned long color, byte brightness) {
