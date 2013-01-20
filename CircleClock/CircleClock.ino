@@ -1,7 +1,8 @@
 #include <LPD8806.h>
 #include <SPI.h>
+#include "color.h"
 
-#define DEBUG (true)
+#define DEBUG (false)
 
 const byte
   // Physical aspects of the clock
@@ -41,16 +42,16 @@ byte
 int
   ticksPastHour = 0;
 long
-  minuteRingColor = 0,
   ticksPastCircle = 0,
   unixTime = 0;
+rgbdata_t minuteRingColor;
 
 LPD8806 strip = LPD8806(stripLength);
 
 void setup() {
   strip.begin();
   Serial.begin(9600);
-  if (DEBUG) {
+  #if DEBUG
     Serial.println("[circleclock_animation]");
     Serial.print("ticksPerMinute: ");
     Serial.println(ticksPerMinute);
@@ -64,7 +65,7 @@ void setup() {
     Serial.println(ticksPerCircle);
     Serial.print("gongLevels: ");
     Serial.println(gongLevels);
-  }
+  #endif
 }
 
 void loop() {
@@ -149,10 +150,10 @@ void processSerialInput(void) {
 
 void adjustBrightness(char newBrightness) {
   brightness = newBrightness;
-  if (DEBUG) {
+  #if DEBUG
     Serial.print("Brightness set to: ");
     Serial.println(brightness, DEC);
-  }
+  #endif
 }
 
 void adjustClock(long difference) {
@@ -195,15 +196,16 @@ void setClock(unsigned long time) {
   adjustClock(time - unixTime);
 }
 
-void displayHours(long color) {
+void displayHours(rgbdata_t color) {
   bool done = false;
+  long sColor = lpdColor(color);
   for (byte i = 0; i < hourDots; ++i) {
     if (ticksPastCircle >= (i + 1) * ticksPerHourDot) {
-      strip.setPixelColor(i + hourBegin, color);
+      strip.setPixelColor(i + hourBegin, sColor);
     } else if (!done) {
       byte relativeBrightness = (
           100 * (ticksPastCircle % ticksPerHourDot) / ticksPerHourDot);
-      strip.setPixelColor(i + hourBegin, colorBrightness(color, relativeBrightness));
+      strip.setPixelColor(i + hourBegin, lpdColor(attenuateColor(color, relativeBrightness)));
       done = true;
     } else {
       strip.setPixelColor(i + hourBegin, 0);
@@ -211,15 +213,16 @@ void displayHours(long color) {
   }
 }
 
-void displayMinutes(long color) {
+void displayMinutes(rgbdata_t color) {
   bool done = false;
+  long sColor = lpdColor(color);
   for (byte i = 0; i < minuteDots; ++i) {
     if (ticksPastHour >= (i + 1) * ticksPerMinuteDot) {
-      strip.setPixelColor(i + minuteBegin, color);
+      strip.setPixelColor(i + minuteBegin, sColor);
     } else if (!done) {
       byte relativeBrightness = (
           100 * (ticksPastHour % ticksPerMinuteDot) / ticksPerMinuteDot);
-      strip.setPixelColor(i + minuteBegin, colorBrightness(color, relativeBrightness));
+      strip.setPixelColor(i + minuteBegin, lpdColor(attenuateColor(color, relativeBrightness)));
       done = true;
     } else {
       strip.setPixelColor(i + minuteBegin, 0);
@@ -227,7 +230,7 @@ void displayMinutes(long color) {
   }
 }
 
-void displayMinuteHandBlink(long color) {
+void displayMinuteHandBlink(rgbdata_t color) {
   const byte handSteps = intervalTick / intervalUpdate / 2;
   byte handDot, relativeBrightness;
   handDot = ticksPastHour / ticksPerMinuteDot + minuteBegin;
@@ -241,19 +244,20 @@ void displayMinuteHandBlink(long color) {
       secondHandRising = true;
   }
   relativeBrightness = 100 * secondHandBrightness / handSteps;
-  strip.setPixelColor(handDot, colorBrightness(color, relativeBrightness));
+  strip.setPixelColor(handDot, lpdColor(attenuateColor(color, relativeBrightness)));
 }
 
 void hourGong(byte strikes) {
   unsigned int frames;
-  unsigned long color, hColor, mColor;
+  unsigned long hColor, mColor;
+  rgbdata_t color;
   if (strikes == 0)
     strikes = hoursPerCircle;
   color = hourColor();
   // Fade minute ring before gonging
   for (byte bright = 95; bright > 0; bright -= 5) {
-    mColor = colorBrightness(minuteColor(), bright);
-    displayHours(colorBrightness(color, bright));
+    mColor = lpdColor(attenuateColor(minuteColor(), bright));
+    displayHours(attenuateColor(color, bright));
     for (byte pos = minuteDots; pos-- > 0;)
       strip.setPixelColor(minuteBegin + pos, mColor);
     strip.show();
@@ -266,13 +270,15 @@ void hourGong(byte strikes) {
   for (unsigned int frame = 0; frame < frames; ++frame) {
     // Gong on minutes ring
     if (frame / gongLevels < strikes) {
-      mColor = colorBrightness(color, gongLevel[frame % gongLevels]);
+      mColor = lpdColor(attenuateColor(
+          color, gongLevel[frame % gongLevels]));
       for (byte pos = minuteDots; pos-- > 0;)
         strip.setPixelColor(minuteBegin + pos, mColor);
     }
     // Gong on hours ring, slightly delayed
     if (frame >= gongHourFrameDelay) {
-      hColor = colorBrightness(color, gongLevel[(frame - gongHourFrameDelay) % gongLevels]);
+      hColor = lpdColor(attenuateColor(
+          color, gongLevel[(frame - gongHourFrameDelay) % gongLevels]));
       for (byte pos = hourDots; pos-- > 0;)
         strip.setPixelColor(hourBegin + pos, hColor);
     }
@@ -282,26 +288,25 @@ void hourGong(byte strikes) {
   }
 }
 
-unsigned long hourColor() {
+rgbdata_t hourColor() {
   // Returns the color for the hour ring (global brightness is applied)
-  return colorBrightness(colorWheel(ticksPastCircle, ticksPerCircle), brightness);
+  return attenuateColor(colorWheel(ticksPastCircle, ticksPerCircle), brightness);
 }
 
-unsigned long minuteColor() {
+rgbdata_t minuteColor() {
   // Returns the color for the minute ring (global brightness is applied)
-  return colorBrightness(colorWheel(ticksPastHour, ticksPerHour), brightness);
+  return attenuateColor(colorWheel(ticksPastHour, ticksPerHour), brightness);
 }
 
-unsigned long colorBrightness(unsigned long color, byte brightness) {
+rgbdata_t attenuateColor(rgbdata_t color, byte brightness) {
   // Changes the brightness for a particular color, each channel linearly
-  byte b = ((color >> 16) & 0x7F) * brightness / 100;
-  byte r = ((color >> 8) & 0x7F) * brightness / 100;
-  byte g = (color & 0x7F) * brightness / 100;
-  // Strip is wired differently from library expectations, RBG order is correct.
-  return strip.Color(r, b, g);
+  color.r = color.r * brightness / 100;
+  color.g = color.g * brightness / 100;
+  color.b = color.b * brightness / 100;
+  return color;
 }
 
-unsigned long colorWheel(unsigned long position, unsigned long scale) {
+rgbdata_t colorWheel(unsigned long position, unsigned long scale) {
   // Returns a color out of 768 possible angle fractions of a color wheel
   unsigned int angle = position * 768 / scale % 768;
   byte r, g, b;
@@ -338,5 +343,9 @@ unsigned long colorWheel(unsigned long position, unsigned long scale) {
       break;
   }
   // Strip is wired differently from library expectations, RBG order is correct.
-  return strip.Color(r, b, g);
+  return rgbdata_t {r, g, b};
+}
+
+unsigned long lpdColor(rgbdata_t color) {
+  return strip.Color(color.r, color.g, color.b);
 }
