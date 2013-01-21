@@ -197,37 +197,34 @@ void setClock(unsigned long time) {
 }
 
 void displayHours(rgbdata_t color) {
-  bool done = false;
-  long sColor = lpdColor(color);
-  for (byte i = 0; i < hourDots; ++i) {
-    if (ticksPastCircle >= (i + 1) * ticksPerHourDot) {
-      strip.setPixelColor(i + hourBegin, sColor);
-    } else if (!done) {
-      byte relativeBrightness = (
-          100 * (ticksPastCircle % ticksPerHourDot) / ticksPerHourDot);
-      strip.setPixelColor(i + hourBegin, lpdColor(attenuateColor(color, relativeBrightness)));
-      done = true;
+  byte handDot = hourBegin + ticksPastCircle / ticksPerHourDot;
+  for (byte pos = hourBegin; pos < hourBegin + hourDots; ++pos) {
+    if (pos < handDot) {
+      lpdColor(pos, color);
     } else {
-      strip.setPixelColor(i + hourBegin, 0);
+      // Cannot leave this out, walking the hands backwards leaves low brightness dots behind.
+      // Also, the hour gong does not have a black in there to avoid hard flickering.
+      lpdColor(pos);
     }
   }
+  byte relativeBrightness = (
+      100 * (ticksPastCircle % ticksPerHourDot) / ticksPerHourDot);
+  lpdColor(handDot, attenuateColor(color, relativeBrightness));
 }
 
 void displayMinutes(rgbdata_t color) {
-  bool done = false;
-  long sColor = lpdColor(color);
-  for (byte i = 0; i < minuteDots; ++i) {
-    if (ticksPastHour >= (i + 1) * ticksPerMinuteDot) {
-      strip.setPixelColor(i + minuteBegin, sColor);
-    } else if (!done) {
-      byte relativeBrightness = (
-          100 * (ticksPastHour % ticksPerMinuteDot) / ticksPerMinuteDot);
-      strip.setPixelColor(i + minuteBegin, lpdColor(attenuateColor(color, relativeBrightness)));
-      done = true;
+  byte handDot = minuteBegin + ticksPastHour / ticksPerMinuteDot;
+  for (byte pos = minuteBegin; pos < minuteBegin + minuteDots; ++pos) {
+    if (pos < handDot) {
+      lpdColor(pos, color);
     } else {
-      strip.setPixelColor(i + minuteBegin, 0);
+      lpdColor(pos);
     }
   }
+  byte relativeBrightness = (
+      100 * (ticksPastHour % ticksPerMinuteDot) / ticksPerMinuteDot);
+  lpdColor(handDot, attenuateColor(color, relativeBrightness));
+
 }
 
 void displayMinuteHandBlink(rgbdata_t color) {
@@ -244,43 +241,75 @@ void displayMinuteHandBlink(rgbdata_t color) {
       secondHandRising = true;
   }
   relativeBrightness = 100 * secondHandBrightness / handSteps;
-  strip.setPixelColor(handDot, lpdColor(attenuateColor(color, relativeBrightness)));
+  lpdColor(handDot, attenuateColor(color, relativeBrightness));
 }
 
 void hourGong(byte strikes) {
-  unsigned int frames;
-  unsigned long hColor, mColor;
-  rgbdata_t color;
+  unsigned int
+    frames,
+    intensity,
+    strike;
+  rgbdata_t
+    color,
+    mColor,
+    ringColor;
   if (strikes == 0)
     strikes = hoursPerCircle;
   color = hourColor();
+  /*
   // Fade minute ring before gonging
   for (byte bright = 95; bright > 0; bright -= 5) {
-    mColor = lpdColor(attenuateColor(minuteColor(), bright));
-    displayHours(attenuateColor(color, bright));
+    ringColor = attenuateColor(minuteColor(), bright);
     for (byte pos = minuteDots; pos-- > 0;)
-      strip.setPixelColor(minuteBegin + pos, mColor);
+      lpdColor(minuteBegin + pos, ringColor);
     strip.show();
     delay(gongFrameTime);
   }
+  */
   // TODO: Fade out hour ring before gonging, fade it back in when done.
   // Preferably have the first gong rise blend into the hour ring
   // and have the last gong fade leave the current hour in place.
   frames = strikes * gongLevels + gongHourFrameDelay;
+  boolean
+    firstGoingUp = true,
+    lastGoingDown = false;
   for (unsigned int frame = 0; frame < frames; ++frame) {
+    strike = frames / gongLevels + 1;
     // Gong on minutes ring
-    if (frame / gongLevels < strikes) {
-      mColor = lpdColor(attenuateColor(
-          color, gongLevel[frame % gongLevels]));
+    intensity = gongLevel[frame % gongLevels];
+    ringColor = attenuateColor(color, intensity);
+    if (strike == 1) {
+      // Blend red into new color!
+      intensity = 100 - 100 * frame / gongLevels;
+      mColor = attenuateColor(minuteColor(), intensity);
+      ringColor.r += mColor.r;
+      ringColor.g += mColor.g;
+      ringColor.b += mColor.b;
       for (byte pos = minuteDots; pos-- > 0;)
-        strip.setPixelColor(minuteBegin + pos, mColor);
+        lpdColor(minuteBegin + pos, ringColor);
     }
+    for (byte pos = minuteDots; pos-- > 0;)
+      lpdColor(minuteBegin + pos, ringColor);
     // Gong on hours ring, slightly delayed
     if (frame >= gongHourFrameDelay) {
-      hColor = lpdColor(attenuateColor(
-          color, gongLevel[(frame - gongHourFrameDelay) % gongLevels]));
-      for (byte pos = hourDots; pos-- > 0;)
-        strip.setPixelColor(hourBegin + pos, hColor);
+      intensity = gongLevel[(frame - gongHourFrameDelay) % gongLevels];
+      ringColor = attenuateColor(color, intensity);
+      if (firstGoingUp) {
+        for (byte pos = ticksPastCircle / ticksPerHourDot; pos < hourDots; ++pos) {
+          lpdColor(hourBegin + pos, ringColor);
+        }
+        if (intensity == 100)
+          firstGoingUp = false;
+      } else if (lastGoingDown) {
+        for (byte pos = ticksPastCircle / ticksPerHourDot; pos < hourDots; ++pos) {
+          lpdColor(hourBegin + pos, ringColor);
+        }
+      } else {
+        for (byte pos = hourDots; pos-- > 0;)
+          lpdColor(hourBegin + pos, ringColor);
+        if (strike == strikes && intensity == 100)
+          lastGoingDown = true;
+      } 
     }
     // Make visible and pause between frames
     strip.show();
@@ -342,10 +371,15 @@ rgbdata_t colorWheel(unsigned long position, unsigned long scale) {
       b = 127 - angle % 128;
       break;
   }
-  // Strip is wired differently from library expectations, RBG order is correct.
   return rgbdata_t {r, g, b};
 }
 
-unsigned long lpdColor(rgbdata_t color) {
-  return strip.Color(color.r, color.g, color.b);
+void lpdColor(byte index, rgbdata_t color) {
+  // Push RGB struct onto LPD8806 strip array.
+  strip.setPixelColor(index, color.r, color.b, color.g);
+}
+
+void lpdColor(byte index) {
+  // Blank the given pixel if we get no color data.
+  strip.setPixelColor(index, 0);
 }
