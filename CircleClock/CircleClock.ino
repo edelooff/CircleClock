@@ -256,40 +256,29 @@ void hourGong(byte strikes) {
   if (strikes == 0)
     strikes = hoursPerCircle;
   color = hourColor();
-  /*
-  // Fade minute ring before gonging
-  for (byte bright = 95; bright > 0; bright -= 5) {
-    ringColor = attenuateColor(minuteColor(), bright);
+  mColor = minuteColor();
+  for (byte fadeStep = 7; fadeStep-- > 0;) {
     for (byte pos = minuteDots; pos-- > 0;)
-      lpdColor(minuteBegin + pos, ringColor);
+      lpdColor(minuteBegin + pos, mColor);
     strip.show();
     delay(gongFrameTime);
+    mColor.r >>= 1;
+    mColor.g >>= 1;
+    mColor.b >>= 1;
   }
-  */
-  // TODO: Fade out hour ring before gonging, fade it back in when done.
-  // Preferably have the first gong rise blend into the hour ring
-  // and have the last gong fade leave the current hour in place.
   frames = strikes * gongLevels + gongHourFrameDelay;
   boolean
     firstGoingUp = true,
     lastGoingDown = false;
   for (unsigned int frame = 0; frame < frames; ++frame) {
-    strike = frames / gongLevels + 1;
+    strike = frame / gongLevels + 1;
     // Gong on minutes ring
-    intensity = gongLevel[frame % gongLevels];
-    ringColor = attenuateColor(color, intensity);
-    if (strike == 1) {
-      // Blend red into new color!
-      intensity = 100 - 100 * frame / gongLevels;
-      mColor = attenuateColor(minuteColor(), intensity);
-      ringColor.r += mColor.r;
-      ringColor.g += mColor.g;
-      ringColor.b += mColor.b;
+    if (strike <= strikes) {
+      intensity = gongLevel[frame % gongLevels];
+      ringColor = attenuateColor(color, intensity);
       for (byte pos = minuteDots; pos-- > 0;)
         lpdColor(minuteBegin + pos, ringColor);
     }
-    for (byte pos = minuteDots; pos-- > 0;)
-      lpdColor(minuteBegin + pos, ringColor);
     // Gong on hours ring, slightly delayed
     if (frame >= gongHourFrameDelay) {
       intensity = gongLevel[(frame - gongHourFrameDelay) % gongLevels];
@@ -309,7 +298,7 @@ void hourGong(byte strikes) {
           lpdColor(hourBegin + pos, ringColor);
         if (strike == strikes && intensity == 100)
           lastGoingDown = true;
-      } 
+      }
     }
     // Make visible and pause between frames
     strip.show();
